@@ -1,0 +1,1 @@
+{"_id":"default","name":"Default","description":"Visible to every authenticated user","allowedRoles":["operator","viewer"],"allowedUserIds":[],"createdAt":"2026-07-14T15:48:03.769Z","updatedAt":"2026-07-14T15:48:03.769Z"}
