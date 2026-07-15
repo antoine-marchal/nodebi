@@ -40,8 +40,17 @@ export interface ChartConfig {
   queryFilter: string;
   xField: string;
   yField: string;
+  series?: Array<{
+    field: string;
+    aggregation?: AggregationType;
+    name?: string;
+    color?: string;
+  }>;
   aggregation?: AggregationType;
   color?: string;
+  showLabels?: boolean;
+  showLegend?: boolean;
+  legendName?: string;
 }
 
 export interface TableConfig {

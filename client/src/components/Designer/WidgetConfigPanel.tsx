@@ -3,7 +3,7 @@ import {
   Box, Typography, Paper, TextField, Select, MenuItem, FormControl,
   InputLabel, IconButton, Tooltip, Chip, FormHelperText, Autocomplete,
   Switch, FormControlLabel, Accordion, AccordionSummary, AccordionDetails, Alert, Button, Divider,
-  CircularProgress,
+  CircularProgress, Dialog, DialogTitle, DialogContent, DialogActions,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -13,9 +13,10 @@ import AddIcon from '@mui/icons-material/Add';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import TuneIcon from '@mui/icons-material/Tune';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import { useDashboardStore } from '../../store';
 import {
-  ChartConfig, KPIConfig, StatCardConfig, GaugeConfig, TextConfig,
+  ChartConfig, ChartSeries, KPIConfig, StatCardConfig, GaugeConfig, TextConfig,
   MetricGroupConfig, MetricItem, MetricItemType,
   ChartGroupConfig, ChartItem, ChartItemType,
   DataSource, isChartType, isMetricType, isPieType,
@@ -43,12 +44,45 @@ const CHART_ITEM_TYPES: { v: ChartItemType; l: string }[] = [
 
 const PIPELINE_EXAMPLE_CHART = `[
   { "$match": { } },
-  { "$group": { "_id": "$field", "value": { "$sum": 1 } } },
+  {
+    "$group": {
+      "_id": "$category",
+      "revenue": { "$sum": "$amount" },
+      "orders": { "$sum": 1 }
+    }
+  },
+  { "$sort": { "_id": 1 } }
+]`;
+const PIPELINE_EXAMPLE_SINGLE_CHART = `[
+  { "$match": { } },
+  { "$group": { "_id": "$category", "value": { "$sum": "$amount" } } },
   { "$sort": { "_id": 1 } }
 ]`;
 const PIPELINE_EXAMPLE_METRIC = `[
   { "$match": { } },
   { "$group": { "_id": null, "value": { "$sum": 1 } } }
+]`;
+
+const PIPELINE_DATE_FIELD_EXAMPLE = `[
+  {
+    "$addFields": {
+      "startDate": {
+        "$dateToString": {
+          "format": "%Y-%m-%d",
+          "date": { "$toDate": "$startTime" }
+        }
+      }
+    }
+  },
+  {
+    "$group": {
+      "_id": "$startDate",
+      "value": { "$sum": 1 }
+    }
+  },
+  {
+    "$sort": { "_id": 1 }
+  }
 ]`;
 
 const PRESET_COLORS = ['', '#E40019', '#2563eb', '#7c3aed', '#059669', '#d97706', '#dc2626', '#0891b2', '#c026d3', '#65a30d', '#ea580c', '#0284c7', '#16a34a', '#64748b'];
@@ -185,7 +219,14 @@ function useSampleFields(dataSourceId: string, collection: string, dataSources: 
   return fields;
 }
 
-function PipelineBlock({ cfg, onChange, example }: { cfg: any; onChange: (patch: any) => void; example: string }) {
+function PipelineBlock({ cfg, onChange, example, showHelp = false, chartSeriesOutput = false, dataSourceType }: {
+  cfg: any;
+  onChange: (patch: any) => void;
+  example: string;
+  showHelp?: boolean;
+  chartSeriesOutput?: boolean;
+  dataSourceType?: DataSource['type'];
+}) {
   const [err, setErr] = useState('');
   const validate = (val: string) => {
     try { const p = JSON.parse(val); if (!Array.isArray(p)) throw new Error('Must be JSON array'); setErr(''); }
@@ -193,10 +234,17 @@ function PipelineBlock({ cfg, onChange, example }: { cfg: any; onChange: (patch:
   };
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 0.5 }}>
-      <FormControlLabel
-        control={<Switch size="small" checked={!!cfg.usePipeline} onChange={e => onChange({ usePipeline: e.target.checked })} />}
-        label={<Typography variant="caption">Custom pipeline</Typography>}
-      />
+      <Box sx={{ display: 'flex', alignItems: 'center' }}>
+        <FormControlLabel
+          sx={{ flex: 1, mr: 0 }}
+          control={<Switch size="small" checked={!!cfg.usePipeline} onChange={e => onChange({
+            usePipeline: e.target.checked,
+            ...(e.target.checked && !cfg.pipeline ? { pipeline: example } : {}),
+          })} />}
+          label={<Typography variant="caption">Custom pipeline</Typography>}
+        />
+        {showHelp && <PipelineHelpButton dataSourceType={dataSourceType} />}
+      </Box>
       {cfg.usePipeline && (
         <>
           <TextField
@@ -207,16 +255,133 @@ function PipelineBlock({ cfg, onChange, example }: { cfg: any; onChange: (patch:
             multiline rows={8} size="small" fullWidth
             inputProps={{ style: { fontFamily: 'monospace', fontSize: 11 } }}
             error={!!err}
-            helperText={err || 'MongoDB-style aggregation stages — overrides filter/fields.'}
+            helperText={err || (chartSeriesOutput
+              ? 'MongoDB-style stages. Chart series map to numeric fields returned by the pipeline.'
+              : 'MongoDB-style aggregation stages — overrides automatic filter and field settings.')}
           />
           {!err && (
             <Alert severity="info" sx={{ py: 0, fontSize: 11 }}>
-              Pipeline overrides filter/fields/aggregation.
+              {chartSeriesOutput
+                ? 'Pipeline overrides source filters and automatic aggregation. Chart output mappings below remain active.'
+                : 'Pipeline overrides automatic filter, field, and aggregation settings.'}
             </Alert>
           )}
         </>
       )}
     </Box>
+  );
+}
+
+function PipelineHelpButton({ dataSourceType }: { dataSourceType?: DataSource['type'] }) {
+  const [open, setOpen] = useState(false);
+  const isNedb = dataSourceType === 'nedb';
+  const codeSx = {
+    m: 0, mt: 1, p: 1.25, borderRadius: 1, bgcolor: 'action.hover',
+    overflowX: 'auto', fontFamily: 'monospace', fontSize: 11, lineHeight: 1.5,
+    whiteSpace: 'pre-wrap', overflowWrap: 'anywhere',
+  } as const;
+
+  return (
+    <>
+      <Tooltip title="Pipeline help">
+        <IconButton
+          size="small"
+          aria-label="Open pipeline help"
+          onMouseDown={e => e.stopPropagation()}
+          onClick={e => { e.stopPropagation(); setOpen(true); }}
+          sx={{ p: 0.35, ml: 'auto' }}
+        >
+          <HelpOutlineIcon sx={{ fontSize: 17 }} />
+        </IconButton>
+      </Tooltip>
+      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Pipeline Mode help</DialogTitle>
+        <DialogContent dividers>
+          <Typography variant="body2" color="text.secondary">
+            A pipeline is an ordered JSON array. Each stage receives the rows produced by the previous stage.
+            Enabling it replaces the widget&apos;s normal filter and automatic aggregation. For charts, output field mappings
+            remain active so each returned numeric field can become its own series and tooltip entry.
+          </Typography>
+
+          <Typography variant="subtitle2" sx={{ mt: 2 }}>What you can do</Typography>
+          <Box component="ul" sx={{ mt: 0.75, mb: 0, pl: 2.5, '& li': { mb: 0.5 } }}>
+            <Typography component="li" variant="body2"><code>$match</code> filters rows with comparisons, ranges, <code>$and</code>, <code>$or</code>, <code>$in</code>, and regular expressions.</Typography>
+            <Typography component="li" variant="body2"><code>$group</code> groups rows and calculates <code>$sum</code>, <code>$avg</code>, <code>$min</code>, <code>$max</code>, <code>$first</code>, and <code>$last</code>.</Typography>
+            <Typography component="li" variant="body2"><code>$sort</code>, <code>$skip</code>, and <code>$limit</code> order and page results.</Typography>
+            <Typography component="li" variant="body2"><code>$project</code> chooses or removes output fields, and can rename or compute them on MongoDB sources.</Typography>
+            <Typography component="li" variant="body2"><code>$count</code> returns the number of rows.</Typography>
+            <Typography component="li" variant="body2"><code>$addFields</code> / <code>$set</code> creates fields while keeping the existing ones (MongoDB sources).</Typography>
+            <Typography component="li" variant="body2">MongoDB sources can also use the aggregation stages and expressions supported by their MongoDB server.</Typography>
+          </Box>
+
+          {isNedb && (
+            <Alert severity="info" sx={{ mt: 2 }}>
+              This widget uses a local NeDB source. It supports <code>$match</code>, <code>$group</code>, <code>$sort</code>,
+              <code> $skip</code>, <code>$limit</code>, inclusion/exclusion <code>$project</code>, and <code>$count</code>. Computed date
+              fields such as the example below require a MongoDB source.
+            </Alert>
+          )}
+
+          <Divider sx={{ my: 2 }} />
+          <Typography variant="subtitle2">Create and render a formatted date field</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            This MongoDB example creates <code>startDate</code> from <code>startTime</code> in <code>YYYY-MM-DD</code> format,
+            counts the rows for each date, and sorts the dates chronologically. <code>$toDate</code> accepts a date value,
+            timestamp, or parseable date string.
+          </Typography>
+          <Box component="pre" sx={codeSx}>{PIPELINE_DATE_FIELD_EXAMPLE}</Box>
+          <Alert severity="warning" sx={{ mt: 1.5 }}>
+            Inside <code>$group</code>, <code>value</code> must contain an accumulator object. Use
+            <code> {`{ "$sum": 1 }`}</code> to count rows. <code>{`{ "$count": "value" }`}</code> is a separate
+            pipeline stage and <code>&quot;$count&quot;</code> by itself is not a valid accumulator.
+          </Alert>
+
+          <Typography variant="subtitle2" sx={{ mt: 2 }}>How to render the result</Typography>
+          <Box component="ol" sx={{ mt: 0.75, mb: 0, pl: 2.5, '& li': { mb: 0.5 } }}>
+            <Typography component="li" variant="body2">Add a bar, line, area, pie, or donut chart and select its data source and collection.</Typography>
+            <Typography component="li" variant="body2">Open Pipeline Mode, enable Custom pipeline, and paste the example above.</Typography>
+            <Typography component="li" variant="body2">The chart renders <code>_id</code> as the category/date label. Legacy single-series pipelines returning <code>value</code> continue to work automatically.</Typography>
+            <Typography component="li" variant="body2">For bar, line, area, or scatter charts, use <strong>Pipeline output</strong> to map each returned numeric field and give it a tooltip/legend name and colour.</Typography>
+          </Box>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            For a table, remove the <code>$group</code> and <code>$sort</code> stages to display each original row with its new
+            <code> startDate</code> field. For KPI, stat card, or gauge widgets, group with <code>_id: null</code> and return one
+            numeric <code>value</code> in the first row.
+          </Typography>
+
+          <Typography variant="subtitle2" sx={{ mt: 2 }}>Multiple chart series</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            Return one numeric field per series from <code>$group</code>. With the example below, add output series named
+            <code> revenue</code> and <code>orders</code>. The tooltip shows both values for the active category.
+          </Typography>
+          <Box component="pre" sx={codeSx}>{PIPELINE_EXAMPLE_CHART}</Box>
+
+          <Typography variant="subtitle2" sx={{ mt: 2 }}>Shape the result for the widget</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            Bar, line, and area charts use <code>_id</code> as the category plus one or more mapped numeric fields. Scatter charts
+            use the configured X output field plus one or more mapped Y fields. Pie/donut and metric widgets still read
+            <code> value</code>. Tables display every field returned.
+          </Typography>
+          <Box component="pre" sx={codeSx}>{`[
+  { "$match": { "status": "active" } },
+  { "$group": { "_id": "$category", "value": { "$sum": "$amount" } } },
+  { "$sort": { "value": -1 } },
+  { "$limit": 10 }
+]`}</Box>
+
+          <Typography variant="subtitle2" sx={{ mt: 2 }}>Tips</Typography>
+          <Box component="ul" sx={{ mt: 0.75, mb: 0, pl: 2.5, '& li': { mb: 0.5 } }}>
+            <Typography component="li" variant="body2">Stage and field names must be quoted because the editor expects valid JSON.</Typography>
+            <Typography component="li" variant="body2">Field references start with <code>$</code>, for example <code>$amount</code>.</Typography>
+            <Typography component="li" variant="body2">Put <code>$match</code> early to reduce the amount of data processed.</Typography>
+            <Typography component="li" variant="body2">Dashboard date and drill-down filters are automatically added as a <code>$match</code> before grouping. If the filter targets a field created by <code>$addFields</code> or <code>$set</code>, the match is placed after that stage.</Typography>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+    </>
   );
 }
 
@@ -266,6 +431,65 @@ function FieldAutocomplete({ label, value, onChange, fields }: { label: string; 
       onInputChange={(_e, v) => onChange(v)}
       renderInput={params => <TextField {...params} label={label} />}
     />
+  );
+}
+
+function ChartSeriesFields({
+  cfg, fields, scatter, pipeline = false, onChange,
+}: {
+  cfg: ChartConfig;
+  fields: string[];
+  scatter: boolean;
+  pipeline?: boolean;
+  onChange: (patch: Partial<ChartConfig>) => void;
+}) {
+  const series: ChartSeries[] = cfg.series?.length
+    ? cfg.series
+    : [{ field: cfg.yField || '', aggregation: cfg.aggregation || 'sum', name: cfg.legendName, color: cfg.color }];
+
+  const commit = (next: ChartSeries[]) => onChange({
+    series: next,
+    yField: next[0]?.field || '',
+    aggregation: next[0]?.aggregation || cfg.aggregation,
+  });
+  const update = (index: number, patch: Partial<ChartSeries>) =>
+    commit(series.map((item, i) => i === index ? { ...item, ...patch } : item));
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+      {pipeline && (
+        <Alert severity="info" sx={{ py: 0, fontSize: 11 }}>
+          Map each series to a numeric field returned by the pipeline. Its name is used in legends and tooltips.
+        </Alert>
+      )}
+      {series.map((item, index) => (
+        <Paper key={index} variant="outlined" sx={{ p: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography variant="caption" fontWeight={600} sx={{ flex: 1 }}>Series {index + 1}</Typography>
+            <IconButton size="small" color="error" disabled={series.length === 1}
+              aria-label={`Remove series ${index + 1}`} onClick={() => commit(series.filter((_, i) => i !== index))}>
+              <DeleteIcon sx={{ fontSize: 15 }} />
+            </IconButton>
+          </Box>
+          <FieldAutocomplete label={pipeline ? 'Pipeline output field' : 'Y axis field'} value={item.field || ''} onChange={v => update(index, { field: v })} fields={fields} />
+          {!scatter && !pipeline && (
+            <FormControl size="small" fullWidth>
+              <InputLabel>Aggregation</InputLabel>
+              <Select value={item.aggregation || 'sum'} label="Aggregation" onChange={e => update(index, { aggregation: e.target.value as any })}>
+                {AGGREGATIONS.map(a => <MenuItem key={a.v} value={a.v}>{a.l}</MenuItem>)}
+              </Select>
+            </FormControl>
+          )}
+          <TextField label="Series name" value={item.name || ''} onChange={e => update(index, { name: e.target.value })}
+            size="small" fullWidth placeholder={item.field || `Series ${index + 1}`} />
+          <ColorField label="Series colour" value={item.color || ''} onChange={v => update(index, { color: v })} />
+        </Paper>
+      ))}
+      <Button size="small" variant="outlined" startIcon={<AddIcon />}
+        onClick={() => commit([...series, { field: '', ...(scatter ? {} : { aggregation: 'sum' }) }])}>
+        Add series
+      </Button>
+    </Box>
   );
 }
 
@@ -356,7 +580,8 @@ function MetricItemEditor({
           </>
         )}
         <ColorField label="Accent colour" value={cfg.accentColor || ''} onChange={v => onChange({ accentColor: v })} />
-        <PipelineBlock cfg={cfg} onChange={onChange} example={PIPELINE_EXAMPLE_METRIC} />
+        <PipelineBlock cfg={cfg} onChange={onChange} example={PIPELINE_EXAMPLE_METRIC} showHelp
+          dataSourceType={dataSources.find(ds => ds.id === cfg.dataSourceId)?.type} />
       </AccordionDetails>
     </Accordion>
   );
@@ -406,8 +631,9 @@ function MetricGroupEditor({ cfg, setConfig, dataSources }: { cfg: MetricGroupCo
 }
 
 function defaultChartItemConfig(type: ChartItemType): ChartConfig {
-  if (type === 'scatter-chart') return { dataSourceId: '', collection: '', queryFilter: '{}', xField: '', yField: '', showLabels: false };
-  return { dataSourceId: '', collection: '', queryFilter: '{}', xField: '', yField: '', aggregation: 'sum', showLabels: false, showLegend: false };
+  if (type === 'scatter-chart') return { dataSourceId: '', collection: '', queryFilter: '{}', xField: '', yField: '', series: [{ field: '' }], showLabels: false };
+  if (type === 'pie-chart' || type === 'donut-chart') return { dataSourceId: '', collection: '', queryFilter: '{}', xField: '', yField: '', aggregation: 'sum', showLabels: false, showLegend: false };
+  return { dataSourceId: '', collection: '', queryFilter: '{}', xField: '', yField: '', series: [{ field: '', aggregation: 'sum' }], aggregation: 'sum', showLabels: false, showLegend: false };
 }
 
 function ChartItemEditor({
@@ -438,13 +664,24 @@ function ChartItemEditor({
         <CollectionSelect value={cfg.collection || ''} onChange={v => onChange({ collection: v })}
           dataSourceId={cfg.dataSourceId} dataSources={dataSources} />
         {!cfg.usePipeline && <FilterField cfg={cfg} onChange={onChange} />}
-        {!cfg.usePipeline && (
+        {cfg.usePipeline && !isPie ? (
+          <>
+            <Typography variant="caption" color="text.secondary" fontWeight={600}>Pipeline output</Typography>
+            {isScatter ? (
+              <FieldAutocomplete label="X output field" value={cfg.xField || ''} onChange={v => onChange({ xField: v })} fields={[]} />
+            ) : (
+              <Alert severity="info" sx={{ py: 0, fontSize: 11 }}>The pipeline&apos;s <code>_id</code> field is used for the X-axis category.</Alert>
+            )}
+            <ChartSeriesFields cfg={cfg} fields={[]} scatter={isScatter} pipeline onChange={onChange} />
+          </>
+        ) : !cfg.usePipeline ? (
           <>
             <FieldAutocomplete label={isPie ? 'Label field' : 'X axis field'} value={cfg.xField || ''}
               onChange={v => onChange({ xField: v })} fields={fields} />
-            <FieldAutocomplete label={isPie ? 'Value field' : 'Y axis field'} value={cfg.yField || ''}
-              onChange={v => onChange({ yField: v })} fields={fields} />
-            {!isScatter && (
+            {isPie ? <FieldAutocomplete label="Value field" value={cfg.yField || ''}
+              onChange={v => onChange({ yField: v })} fields={fields} /> :
+              <ChartSeriesFields cfg={cfg} fields={fields} scatter={isScatter} onChange={onChange} />}
+            {isPie && (
               <FormControl size="small" fullWidth>
                 <InputLabel>Aggregation</InputLabel>
                 <Select value={cfg.aggregation || 'sum'} label="Aggregation" onChange={e => onChange({ aggregation: e.target.value as any })}>
@@ -453,17 +690,23 @@ function ChartItemEditor({
               </FormControl>
             )}
           </>
-        )}
-        <ColorField label="Accent colour" value={cfg.color || ''} onChange={v => onChange({ color: v })} />
+        ) : null}
+        {isPie && <ColorField label="Accent colour" value={cfg.color || ''} onChange={v => onChange({ color: v })} />}
         {!isPie && (
           <FormControlLabel
             control={<Switch size="small" checked={!!cfg.showLabels} onChange={e => onChange({ showLabels: e.target.checked })} />}
             label={<Typography variant="caption">Show value labels</Typography>} />
         )}
-        <FormControlLabel
-          control={<Switch size="small" checked={!!cfg.showLegend} onChange={e => onChange({ showLegend: e.target.checked })} />}
-          label={<Typography variant="caption">Show legend</Typography>} />
-        <PipelineBlock cfg={cfg} onChange={onChange} example={PIPELINE_EXAMPLE_CHART} />
+            <FormControlLabel
+              control={<Switch size="small" checked={!!cfg.showLegend} onChange={e => onChange({ showLegend: e.target.checked })} />}
+              label={<Typography variant="caption">Show legend</Typography>} />
+            {cfg.showLegend && isPie && (
+              <TextField label="Legend name" value={cfg.legendName || ''} onChange={e => onChange({ legendName: e.target.value })}
+                size="small" fullWidth placeholder={cfg.usePipeline ? 'Executions' : (cfg.yField || 'Value')} />
+            )}
+        <PipelineBlock cfg={cfg} onChange={onChange} example={isPie ? PIPELINE_EXAMPLE_SINGLE_CHART : PIPELINE_EXAMPLE_CHART}
+          showHelp chartSeriesOutput={!isPie}
+          dataSourceType={dataSources.find(ds => ds.id === cfg.dataSourceId)?.type} />
       </AccordionDetails>
     </Accordion>
   );
@@ -547,8 +790,9 @@ export default function WidgetConfigPanel() {
   const hasPipeline = hasData;
   const isPie = isPieType(t);
   const dsOptions = dashboard.dataSources;
+  const selectedDataSourceType = dsOptions.find(ds => ds.id === cfg.dataSourceId)?.type;
 
-  const pipelineExample = isMetricType(t) ? PIPELINE_EXAMPLE_METRIC : PIPELINE_EXAMPLE_CHART;
+  const pipelineExample = isMetricType(t) ? PIPELINE_EXAMPLE_METRIC : isPie ? PIPELINE_EXAMPLE_SINGLE_CHART : PIPELINE_EXAMPLE_CHART;
 
   return (
     <Paper elevation={0} sx={{
@@ -611,9 +855,10 @@ export default function WidgetConfigPanel() {
             <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ textTransform: 'uppercase', letterSpacing: 0.8, mt: 0.5 }}>{isPie ? 'Fields' : 'Axes'}</Typography>
             <FieldAutocomplete label={isPie ? 'Label field' : 'X axis field'} value={cfg.xField || ''}
               onChange={v => setConfig({ xField: v })} fields={fields} />
-            <FieldAutocomplete label={isPie ? 'Value field' : 'Y axis field (value)'} value={cfg.yField || ''}
-              onChange={v => setConfig({ yField: v })} fields={fields} />
-            {!isScatter && (
+            {isPie ? <FieldAutocomplete label="Value field" value={cfg.yField || ''}
+              onChange={v => setConfig({ yField: v })} fields={fields} /> :
+              <ChartSeriesFields cfg={cfg as ChartConfig} fields={fields} scatter={isScatter} onChange={setConfig} />}
+            {isPie && (
               <FormControl size="small" fullWidth>
                 <InputLabel>Aggregation</InputLabel>
                 <Select value={cfg.aggregation || 'sum'} label="Aggregation" onChange={e => setConfig({ aggregation: e.target.value })}>
@@ -625,10 +870,24 @@ export default function WidgetConfigPanel() {
           </>
         )}
 
+        {(isChart || isScatter) && cfg.usePipeline && !isPie && (
+          <>
+            <Typography variant="caption" color="text.secondary" fontWeight={600}
+              sx={{ textTransform: 'uppercase', letterSpacing: 0.8, mt: 0.5 }}>Pipeline output</Typography>
+            {isScatter ? (
+              <FieldAutocomplete label="X output field" value={cfg.xField || ''}
+                onChange={v => setConfig({ xField: v })} fields={[]} />
+            ) : (
+              <Alert severity="info" sx={{ py: 0, fontSize: 11 }}>The pipeline&apos;s <code>_id</code> field is used for the X-axis category.</Alert>
+            )}
+            <ChartSeriesFields cfg={cfg as ChartConfig} fields={[]} scatter={isScatter} pipeline onChange={setConfig} />
+          </>
+        )}
+
         {(isChart || isScatter) && (
           <>
             <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ textTransform: 'uppercase', letterSpacing: 0.8, mt: 0.5 }}>Appearance</Typography>
-            <ColorField label="Accent colour" value={cfg.color || ''} onChange={v => setConfig({ color: v })} />
+            {isPie && <ColorField label="Accent colour" value={cfg.color || ''} onChange={v => setConfig({ color: v })} />}
             {!isPie && (
               <FormControlLabel
                 control={<Switch size="small" checked={!!cfg.showLabels} onChange={e => setConfig({ showLabels: e.target.checked })} />}
@@ -637,6 +896,10 @@ export default function WidgetConfigPanel() {
             <FormControlLabel
               control={<Switch size="small" checked={!!cfg.showLegend} onChange={e => setConfig({ showLegend: e.target.checked })} />}
               label={<Typography variant="caption">Show legend</Typography>} />
+            {cfg.showLegend && isPie && (
+              <TextField label="Legend name" value={cfg.legendName || ''} onChange={e => setConfig({ legendName: e.target.value })}
+                size="small" fullWidth placeholder={cfg.usePipeline ? 'Executions' : (cfg.yField || 'Value')} />
+            )}
           </>
         )}
 
@@ -713,15 +976,17 @@ export default function WidgetConfigPanel() {
         {hasPipeline && (
           <Accordion disableGutters elevation={0} sx={{ border: 1, borderColor: 'divider', borderRadius: '8px !important', mt: 1, '&:before': { display: 'none' } }}>
             <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ minHeight: 36, '& .MuiAccordionSummary-content': { my: 0.5 } }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
                 <AccountTreeIcon sx={{ fontSize: 16, color: cfg.usePipeline ? 'primary.main' : 'text.disabled' }} />
                 <Typography variant="caption" fontWeight={600} color={cfg.usePipeline ? 'primary.main' : 'text.secondary'}>
                   Pipeline Mode {cfg.usePipeline ? '(active)' : ''}
                 </Typography>
+                <PipelineHelpButton dataSourceType={selectedDataSourceType} />
               </Box>
             </AccordionSummary>
             <AccordionDetails sx={{ pt: 0, pb: 1.5, px: 1.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-              <PipelineBlock cfg={cfg} onChange={setConfig} example={pipelineExample} />
+              <PipelineBlock cfg={cfg} onChange={setConfig} example={pipelineExample}
+                chartSeriesOutput={!isPie && (isChart || isScatter)} />
             </AccordionDetails>
           </Accordion>
         )}

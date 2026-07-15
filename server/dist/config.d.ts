@@ -1,3 +1,4 @@
+export declare const RUNTIME_DIR: string;
 export declare const PORT: number;
 export declare const DATA_DIR: string;
 export declare const USER_DATA_DIR: string;

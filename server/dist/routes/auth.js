@@ -3,6 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.findOrCreateProxyUser = findOrCreateProxyUser;
 exports.ensureAdmin = ensureAdmin;
 exports.authRouter = authRouter;
 const express_1 = require("express");
@@ -14,6 +15,20 @@ const auth_1 = require("../auth");
 const config_1 = require("../config");
 const ROLES = ['admin', 'operator', 'viewer'];
 const publicUser = (u) => ({ _id: u._id, login: u.login, role: u.role, createdAt: u.createdAt });
+async function findOrCreateProxyUser(users, login) {
+    const existing = await users.findOneAsync({ login });
+    if (existing)
+        return existing;
+    const now = new Date().toISOString();
+    return users.insertAsync({
+        _id: (0, uuid_1.v4)(),
+        login,
+        passwordHash: null,
+        role: 'viewer',
+        createdAt: now,
+        updatedAt: now,
+    });
+}
 async function ensureAdmin(users) {
     if (await users.findOneAsync({ login: config_1.ADMIN_LOGIN }))
         return;
@@ -58,9 +73,9 @@ function authRouter(users) {
             const body = await requestText(`${config_1.PROXYAUTH_URL}${separator}${encodeURIComponent(config_1.PROXYAUTH_NAME)}=${encodeURIComponent(ticket)}&service=${encodeURIComponent(config_1.PUBLIC_URL)}`);
             const match = body.match(new RegExp(config_1.PROXYAUTH_REGEX));
             const login = match?.[1]?.trim().toLowerCase();
-            const user = login ? await users.findOneAsync({ login }) : null;
-            if (!user)
-                return res.status(401).json({ error: 'Proxy-authenticated user is not registered in NodeBI' });
+            if (!login)
+                return res.status(401).json({ error: 'Proxy authentication did not return a valid login' });
+            const user = await findOrCreateProxyUser(users, login);
             res.json({ accessToken: (0, auth_1.createAccessToken)(user), user: publicUser(user) });
         }
         catch (e) {

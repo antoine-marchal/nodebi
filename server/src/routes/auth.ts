@@ -11,6 +11,21 @@ import { Role, User } from '../types';
 const ROLES: Role[] = ['admin', 'operator', 'viewer'];
 const publicUser = (u: User) => ({ _id: u._id, login: u.login, role: u.role, createdAt: u.createdAt });
 
+export async function findOrCreateProxyUser(users: Nedb<User>, login: string): Promise<User> {
+  const existing = await users.findOneAsync({ login });
+  if (existing) return existing;
+
+  const now = new Date().toISOString();
+  return users.insertAsync({
+    _id: uuidv4(),
+    login,
+    passwordHash: null,
+    role: 'viewer',
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
 export async function ensureAdmin(users: Nedb<User>) {
   if (await users.findOneAsync({ login: ADMIN_LOGIN })) return;
   const now = new Date().toISOString();
@@ -56,8 +71,8 @@ export function authRouter(users: Nedb<User>): Router {
       const body = await requestText(`${PROXYAUTH_URL}${separator}${encodeURIComponent(PROXYAUTH_NAME)}=${encodeURIComponent(ticket)}&service=${encodeURIComponent(PUBLIC_URL)}`);
       const match = body.match(new RegExp(PROXYAUTH_REGEX));
       const login = match?.[1]?.trim().toLowerCase();
-      const user = login ? await users.findOneAsync({ login }) : null;
-      if (!user) return res.status(401).json({ error: 'Proxy-authenticated user is not registered in NodeBI' });
+      if (!login) return res.status(401).json({ error: 'Proxy authentication did not return a valid login' });
+      const user = await findOrCreateProxyUser(users, login);
       res.json({ accessToken: createAccessToken(user), user: publicUser(user) });
     } catch (e: any) { res.status(502).json({ error: e?.message || 'Proxy authentication failed' }); }
   });

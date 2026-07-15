@@ -42,6 +42,8 @@ export default function Home() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [activeSource, setActiveSource] = useState<string | null>(null);
+  const [activeNamespace, setActiveNamespace] = useState<string | null>(null);
   const { newDashboard, importJSON, themeMode, toggleTheme } = useDashboardStore();
   const { user, isAdmin, canCreate, logout } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -63,11 +65,15 @@ export default function Home() {
     const query = search.trim().toLowerCase();
     return dashboards.filter(d => {
       if (activeTag && !(d.tags || []).includes(activeTag)) return false;
+      if (activeSource && !d.dataSources.some(source => source.name === activeSource)) return false;
+      if (activeNamespace && (d.namespaceId || 'default') !== activeNamespace) return false;
       return !query || d.name.toLowerCase().includes(query)
         || (d.description || '').toLowerCase().includes(query)
-        || (d.tags || []).some(tag => tag.toLowerCase().includes(query));
+        || (d.tags || []).some(tag => tag.toLowerCase().includes(query))
+        || d.dataSources.some(source => source.name.toLowerCase().includes(query))
+        || (d.namespaceId || 'default').toLowerCase().includes(query);
     });
-  }, [activeTag, dashboards, search]);
+  }, [activeNamespace, activeSource, activeTag, dashboards, search]);
 
   const totals = useMemo(() => ({
     widgets: dashboards.reduce((sum, d) => sum + d.widgets.length, 0),
@@ -148,7 +154,7 @@ export default function Home() {
 
         <Box sx={{ display: 'flex', gap: 1.5, mb: 3, alignItems: 'center', flexWrap: 'wrap' }}>
           <TextField
-            aria-label="Search dashboards" placeholder="Search dashboards, tags, or descriptions" value={search}
+            aria-label="Search dashboards" placeholder="Search dashboards, tags, sources, or namespaces" value={search}
             onChange={event => setSearch(event.target.value)} size="small"
             sx={{ width: { xs: '100%', sm: 390 }, bgcolor: 'background.paper' }}
             InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }}
@@ -167,8 +173,8 @@ export default function Home() {
             <Box>
               <Box sx={{ width: 58, height: 58, borderRadius: 2.5, bgcolor: 'action.selected', color: 'primary.main', display: 'grid', placeItems: 'center', mx: 'auto', mb: 2 }}><DashboardCustomizeIcon /></Box>
               <Typography variant="h5">{dashboards.length ? 'No dashboards match' : 'Create your first dashboard'}</Typography>
-              <Typography color="text.secondary" sx={{ mt: 1, mb: 2.5 }}>{dashboards.length ? 'Try a different search or clear the active tag.' : 'Start with a blank canvas and connect your data when you are ready.'}</Typography>
-              {dashboards.length ? <Button onClick={() => { setSearch(''); setActiveTag(null); }}>Clear filters</Button> : canCreate ? <Button variant="contained" startIcon={<AddIcon />} onClick={handleNew}>Create dashboard</Button> : null}
+              <Typography color="text.secondary" sx={{ mt: 1, mb: 2.5 }}>{dashboards.length ? 'Try a different search or clear the active filters.' : 'Start with a blank canvas and connect your data when you are ready.'}</Typography>
+              {dashboards.length ? <Button onClick={() => { setSearch(''); setActiveTag(null); setActiveSource(null); setActiveNamespace(null); }}>Clear filters</Button> : canCreate ? <Button variant="contained" startIcon={<AddIcon />} onClick={handleNew}>Create dashboard</Button> : null}
             </Box>
           </Box>
         ) : (
@@ -188,9 +194,20 @@ export default function Home() {
                     </Box>
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 2, minHeight: 42, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{dashboard.description || 'A focused workspace ready for your data story.'}</Typography>
                     <Stack direction="row" spacing={.6} sx={{ mt: 2, flexWrap: 'wrap', gap: .6 }}>
-                      <Chip label={dashboard.namespaceId || 'default'} size="small" color="primary" variant="outlined" />
+                      <Chip
+                        label={dashboard.namespaceId || 'default'} size="small" color="primary"
+                        variant={activeNamespace === (dashboard.namespaceId || 'default') ? 'filled' : 'outlined'}
+                        onClick={() => setActiveNamespace(activeNamespace === (dashboard.namespaceId || 'default') ? null : (dashboard.namespaceId || 'default'))}
+                      />
                       {(dashboard.tags || []).slice(0, 3).map(tag => <Chip key={tag} label={tag} size="small" onClick={() => setActiveTag(tag)} />)}
-                      {dashboard.dataSources.slice(0, 2).map(source => <Chip key={source.id} label={source.name} size="small" variant="outlined" color={source.type === 'mongodb' ? 'success' : 'info'} />)}
+                      {dashboard.dataSources.map(source => (
+                        <Chip
+                          key={source.id} label={source.name} size="small"
+                          variant={activeSource === source.name ? 'filled' : 'outlined'}
+                          color={source.type === 'mongodb' ? 'success' : 'info'}
+                          onClick={() => setActiveSource(activeSource === source.name ? null : source.name)}
+                        />
+                      ))}
                     </Stack>
                   </CardContent>
                   <CardActions sx={{ px: 2.5, pb: 2.25, pt: 0, gap: .5 }}>

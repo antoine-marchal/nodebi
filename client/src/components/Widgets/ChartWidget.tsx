@@ -6,7 +6,7 @@ import {
   LabelList,
 } from 'recharts';
 import { Box, Typography, useTheme } from '@mui/material';
-import { ChartConfig } from '../../types';
+import { ChartConfig, ChartSeries } from '../../types';
 
 interface Props {
   type: 'bar-chart' | 'line-chart' | 'area-chart' | 'pie-chart' | 'donut-chart' | 'scatter-chart';
@@ -20,21 +20,35 @@ export const CHART_COLORS = [
   '#0891b2', '#c026d3', '#65a30d', '#ea580c', '#0284c7',
 ];
 
-function normalizeXY(data: any[], config: ChartConfig) {
+function configuredSeries(config: ChartConfig): ChartSeries[] {
+  return config.series?.length
+    ? config.series
+    : [{ field: config.yField, aggregation: config.aggregation, name: config.legendName, color: config.color }];
+}
+
+function normalizeXY(data: any[], config: ChartConfig, series: ChartSeries[]): Array<Record<string, any>> {
   if (data.length > 0 && '_id' in data[0]) {
-    return data.map(d => ({ label: d._id === null ? '(null)' : String(d._id), raw: d._id, value: Number(d.value) || 0 }));
+    return data.map(d => ({
+      label: d._id === null ? '(null)' : String(d._id),
+      raw: d._id,
+      ...Object.fromEntries(series.map((s, index) => [
+        `series_${index}`,
+        Number(d[`series_${index}`] ?? d[s.field] ?? (index === 0 ? d.value : 0)) || 0,
+      ])),
+    }));
   }
   return data.map(d => ({
     label: String(d[config.xField] ?? '?'),
     raw: d[config.xField],
-    value: Number(d[config.yField]) || 0,
+    ...Object.fromEntries(series.map((s, index) => [`series_${index}`, Number(d[s.field]) || 0])),
   }));
 }
 
-function normalizeScatter(data: any[], config: ChartConfig) {
+function normalizeScatter(data: any[], config: ChartConfig, field: string, seriesName: string) {
   return data.map(d => ({
     x: Number(d[config.xField]) || 0,
-    y: Number(d[config.yField]) || 0,
+    y: Number(d[field]) || 0,
+    seriesName,
   }));
 }
 
@@ -69,6 +83,19 @@ function PieTooltip({ active, payload }: any) {
   );
 }
 
+function ScatterTooltip({ active, payload, xField }: any) {
+  if (!active || !payload?.length) return null;
+  const point = payload[0]?.payload;
+  if (!point) return null;
+  return (
+    <Box sx={{ bgcolor: 'background.paper', border: 1, borderColor: 'divider', borderRadius: 1, px: 1.5, py: 1 }}>
+      <Typography variant="caption" fontWeight={700}>{point.seriesName}</Typography>
+      <Typography variant="caption" display="block">{xField || 'X'}: <b>{Number(point.x).toLocaleString()}</b></Typography>
+      <Typography variant="caption" display="block">Value: <b>{Number(point.y).toLocaleString()}</b></Typography>
+    </Box>
+  );
+}
+
 export default function ChartWidget({ type, data, config, onDrilldown }: Props) {
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
@@ -76,7 +103,7 @@ export default function ChartWidget({ type, data, config, onDrilldown }: Props) 
   const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.07)';
   const tooltipBg = theme.palette.background.paper;
   const tooltipBorder = theme.palette.divider;
-  const color = config.color || CHART_COLORS[0];
+  const series = configuredSeries(config);
 
   const tooltipStyle = {
     contentStyle: {
@@ -105,9 +132,9 @@ export default function ChartWidget({ type, data, config, onDrilldown }: Props) 
   }
 
   if (type === 'pie-chart' || type === 'donut-chart') {
-    const normalized = normalizeXY(data, config);
-    const totalSum = normalized.reduce((s, d) => s + d.value, 0);
-    const withPercent = normalized.map(n => ({ ...n, percent: totalSum > 0 ? n.value / totalSum : 0 }));
+    const normalized = normalizeXY(data, config, series);
+    const totalSum = normalized.reduce((sum, item) => sum + item.series_0, 0);
+    const withPercent = normalized.map(item => ({ ...item, value: item.series_0, percent: totalSum > 0 ? item.series_0 / totalSum : 0 }));
     const innerR = type === 'donut-chart' ? '45%' : '0%';
 
     return (
@@ -148,23 +175,30 @@ export default function ChartWidget({ type, data, config, onDrilldown }: Props) 
   }
 
   if (type === 'scatter-chart') {
-    const scatterData = normalizeScatter(data, config);
     return (
       <ResponsiveContainer width="100%" height="100%">
         <ScatterChart margin={{ top: 10, right: 16, bottom: 0, left: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
           <XAxis type="number" dataKey="x" name={config.xField} tick={{ fill: tickColor, fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={v => Number(v).toLocaleString()} />
-          <YAxis type="number" dataKey="y" name={config.yField} tick={{ fill: tickColor, fontSize: 11 }} tickLine={false} axisLine={false} width={42} tickFormatter={v => Number(v).toLocaleString()} />
+          <YAxis type="number" dataKey="y" name="Value" tick={{ fill: tickColor, fontSize: 11 }} tickLine={false} axisLine={false} width={42} tickFormatter={v => Number(v).toLocaleString()} />
           <ZAxis range={[30, 30]} />
-          <Tooltip {...tooltipStyle} formatter={(v: any, n: string) => [Number(v).toLocaleString(), n]} />
+          <Tooltip content={<ScatterTooltip xField={config.xField} />} />
           {config.showLegend && <Legend verticalAlign="bottom" height={24} iconSize={10} wrapperStyle={{ fontSize: 11 }} />}
-          <Scatter data={scatterData} fill={color} opacity={0.75} />
+          {series.map((item, index) => (
+            <Scatter
+              key={`${item.field}-${index}`}
+              name={item.name?.trim() || item.field || `Series ${index + 1}`}
+              data={normalizeScatter(data, config, item.field, item.name?.trim() || item.field || `Series ${index + 1}`)}
+              fill={item.color || (index === 0 ? config.color : '') || CHART_COLORS[index % CHART_COLORS.length]}
+              opacity={0.75}
+            />
+          ))}
         </ScatterChart>
       </ResponsiveContainer>
     );
   }
 
-  const normalized = normalizeXY(data, config);
+  const normalized = normalizeXY(data, config, series);
   const margin = { top: config.showLabels ? 20 : 8, right: 12, left: 0, bottom: 4 };
   const cursor = onDrilldown ? 'pointer' : 'default';
 
@@ -173,7 +207,7 @@ export default function ChartWidget({ type, data, config, onDrilldown }: Props) 
       <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
       <XAxis dataKey="label" tick={{ fill: tickColor, fontSize: 11 }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
       <YAxis tick={{ fill: tickColor, fontSize: 11 }} tickLine={false} axisLine={false} width={46} tickFormatter={v => Number(v).toLocaleString()} />
-      <Tooltip {...tooltipStyle} formatter={(v: any) => [Number(v).toLocaleString(), config.yField || 'Value']} />
+      <Tooltip {...tooltipStyle} shared filterNull formatter={(v: any, name: string) => [Number(v).toLocaleString(), name]} />
       {config.showLegend && <Legend verticalAlign="bottom" height={24} iconSize={10} wrapperStyle={{ fontSize: 11 }} />}
     </>
   );
@@ -183,12 +217,16 @@ export default function ChartWidget({ type, data, config, onDrilldown }: Props) 
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={normalized} margin={margin} onClick={(e: any) => e?.activePayload?.[0] && handleClick(e.activePayload[0])}>
           {commonAxis}
-          <Line type="monotone" dataKey="value" name={config.yField || 'Value'} stroke={color} strokeWidth={2.5}
-            dot={{ r: 3, fill: color, strokeWidth: 0, cursor }} activeDot={{ r: 5, strokeWidth: 0 }}>
-            {config.showLabels && (
-              <LabelList dataKey="value" position="top" style={{ fill: tickColor, fontSize: 10, fontFamily: 'Inter' }} formatter={(v: any) => Number(v).toLocaleString()} />
-            )}
-          </Line>
+          {series.map((item, index) => {
+            const color = item.color || (index === 0 ? config.color : '') || CHART_COLORS[index % CHART_COLORS.length];
+            const dataKey = `series_${index}`;
+            return (
+              <Line key={dataKey} type="monotone" dataKey={dataKey} name={item.name?.trim() || item.field || `Series ${index + 1}`}
+                stroke={color} strokeWidth={2.5} dot={{ r: 3, fill: color, strokeWidth: 0, cursor }} activeDot={{ r: 5, strokeWidth: 0 }}>
+                {config.showLabels && <LabelList dataKey={dataKey} position="top" style={{ fill: tickColor, fontSize: 10, fontFamily: 'Inter' }} formatter={(v: any) => Number(v).toLocaleString()} />}
+              </Line>
+            );
+          })}
         </LineChart>
       </ResponsiveContainer>
     );
@@ -198,19 +236,22 @@ export default function ChartWidget({ type, data, config, onDrilldown }: Props) 
     return (
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={normalized} margin={margin} onClick={(e: any) => e?.activePayload?.[0] && handleClick(e.activePayload[0])}>
-          <defs>
-            <linearGradient id={`areaGrad-${color.replace('#', '')}`} x1="0" y1="0" x2="0" y2="1">
+          <defs>{series.map((item, index) => {
+            const color = item.color || (index === 0 ? config.color : '') || CHART_COLORS[index % CHART_COLORS.length];
+            return <linearGradient key={index} id={`areaGrad-${index}`} x1="0" y1="0" x2="0" y2="1">
               <stop offset="10%" stopColor={color} stopOpacity={0.3} />
               <stop offset="90%" stopColor={color} stopOpacity={0.02} />
-            </linearGradient>
-          </defs>
+            </linearGradient>;
+          })}</defs>
           {commonAxis}
-          <Area type="monotone" dataKey="value" name={config.yField || 'Value'} stroke={color} strokeWidth={2.5}
-            fill={`url(#areaGrad-${color.replace('#', '')})`} dot={{ r: 3, fill: color, strokeWidth: 0 }}>
-            {config.showLabels && (
-              <LabelList dataKey="value" position="top" style={{ fill: tickColor, fontSize: 10, fontFamily: 'Inter' }} formatter={(v: any) => Number(v).toLocaleString()} />
-            )}
-          </Area>
+          {series.map((item, index) => {
+            const color = item.color || (index === 0 ? config.color : '') || CHART_COLORS[index % CHART_COLORS.length];
+            const dataKey = `series_${index}`;
+            return <Area key={dataKey} type="monotone" dataKey={dataKey} name={item.name?.trim() || item.field || `Series ${index + 1}`}
+              stroke={color} strokeWidth={2.5} fill={`url(#areaGrad-${index})`} dot={{ r: 3, fill: color, strokeWidth: 0 }}>
+              {config.showLabels && <LabelList dataKey={dataKey} position="top" style={{ fill: tickColor, fontSize: 10, fontFamily: 'Inter' }} formatter={(v: any) => Number(v).toLocaleString()} />}
+            </Area>;
+          })}
         </AreaChart>
       </ResponsiveContainer>
     );
@@ -220,11 +261,14 @@ export default function ChartWidget({ type, data, config, onDrilldown }: Props) 
     <ResponsiveContainer width="100%" height="100%">
       <BarChart data={normalized} margin={margin} onClick={(e: any) => e?.activePayload?.[0] && handleClick(e.activePayload[0])}>
         {commonAxis}
-        <Bar dataKey="value" name={config.yField || 'Value'} fill={color} radius={[3, 3, 0, 0]} cursor={cursor}>
-          {config.showLabels && (
-            <LabelList dataKey="value" position="top" style={{ fill: tickColor, fontSize: 10, fontFamily: 'Inter' }} formatter={(v: any) => Number(v).toLocaleString()} />
-          )}
-        </Bar>
+        {series.map((item, index) => {
+          const dataKey = `series_${index}`;
+          return <Bar key={dataKey} dataKey={dataKey} name={item.name?.trim() || item.field || `Series ${index + 1}`}
+            fill={item.color || (index === 0 ? config.color : '') || CHART_COLORS[index % CHART_COLORS.length]}
+            radius={[3, 3, 0, 0]} cursor={cursor}>
+            {config.showLabels && <LabelList dataKey={dataKey} position="top" style={{ fill: tickColor, fontSize: 10, fontFamily: 'Inter' }} formatter={(v: any) => Number(v).toLocaleString()} />}
+          </Bar>;
+        })}
       </BarChart>
     </ResponsiveContainer>
   );

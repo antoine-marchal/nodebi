@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useMemo } from 'react';
+import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import { Box, Typography, IconButton, Tooltip } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import {
@@ -22,7 +22,13 @@ interface Props {
   dataSources: DataSource[];
 }
 
-function configFingerprint(widget: Widget, gf?: GlobalFilters): string {
+function configFingerprint(
+  widget: Widget,
+  gf: GlobalFilters | undefined,
+  dashboardId: string | undefined,
+  shareToken: string | undefined,
+  dataSources: DataSource[],
+): string {
   const cfg = widget.config as any;
   // Capture only fields that influence query results
   return JSON.stringify({
@@ -31,9 +37,12 @@ function configFingerprint(widget: Widget, gf?: GlobalFilters): string {
     col: cfg.collection,
     qf: cfg.queryFilter,
     p: cfg.usePipeline ? cfg.pipeline : null,
-    xf: cfg.xField, yf: cfg.yField, vf: cfg.valueField, ag: cfg.aggregation,
+    xf: cfg.xField, yf: cfg.yField, series: cfg.series, vf: cfg.valueField, ag: cfg.aggregation,
     lim: cfg.limit,
     gf,
+    dashboardId,
+    shareToken,
+    dataSources: dataSources.map(ds => `${ds.id}:${ds.type}`).sort(),
   });
 }
 
@@ -47,13 +56,20 @@ export default function WidgetRenderer({ widget, dataSources }: Props) {
   const [error, setError] = useState('');
   const [firstLoad, setFirstLoad] = useState(true);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasFetchedRef = useRef(false);
+  const requestRef = useRef(0);
+  const lastFiltersRef = useRef(JSON.stringify(globalFilters || {}));
 
   const dashboardId = useDashboardStore(s => s.dashboard._id);
   const ctx: QueryContext = useMemo(() => ({ dataSources, dashboardId, shareToken, globalFilters }), [dataSources, dashboardId, shareToken, globalFilters]);
 
-  const fingerprint = useMemo(() => configFingerprint(widget, globalFilters), [widget, globalFilters]);
+  const fingerprint = useMemo(
+    () => configFingerprint(widget, globalFilters, dashboardId, shareToken, dataSources),
+    [widget, globalFilters, dashboardId, shareToken, dataSources],
+  );
 
-  const runFetch = async () => {
+  const runFetch = useCallback(async () => {
+    const requestId = ++requestRef.current;
     const cfg = widget.config as any;
     if (widget.type === 'text' || widget.type === 'metric-group' || widget.type === 'chart-group') return;
     if (!cfg.dataSourceId || !cfg.collection) return;
@@ -73,30 +89,40 @@ export default function WidgetRenderer({ widget, dataSources }: Props) {
       } else {
         result = [];
       }
-      setData(result);
+      if (requestId === requestRef.current) setData(result);
     } catch (e: any) {
-      setError(e?.response?.data?.error || e?.message || 'Failed to load');
+      if (requestId === requestRef.current) setError(e?.response?.data?.error || e?.message || 'Failed to load');
     } finally {
-      setLoading(false);
-      setFirstLoad(false);
+      if (requestId === requestRef.current) {
+        setLoading(false);
+        setFirstLoad(false);
+      }
     }
-  };
+  }, [widget, shareToken, dataSources, ctx]);
 
   // Debounced fetch on fingerprint change
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    // Invalidate any older request immediately, even if a config edit is debounced.
+    requestRef.current += 1;
+    const filtersKey = JSON.stringify(globalFilters || {});
+    const filtersChanged = lastFiltersRef.current !== filtersKey;
+    lastFiltersRef.current = filtersKey;
+    if (!hasFetchedRef.current || filtersChanged) {
+      hasFetchedRef.current = true;
+      runFetch();
+      return;
+    }
     debounceRef.current = setTimeout(() => { runFetch(); }, 250);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fingerprint]);
+  }, [fingerprint, globalFilters, runFetch]);
 
   // Auto-refresh interval
   useEffect(() => {
     if (!widget.refreshIntervalSec || widget.refreshIntervalSec < 5) return;
     const h = setInterval(() => { runFetch(); }, widget.refreshIntervalSec * 1000);
     return () => clearInterval(h);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [widget.refreshIntervalSec, fingerprint]);
+  }, [widget.refreshIntervalSec, runFetch]);
 
   if (widget.type === 'text') return <TextWidget config={widget.config as TextConfig} />;
   if (widget.type === 'metric-group') return <MetricGroupWidget config={widget.config as MetricGroupConfig} dataSources={dataSources} />;

@@ -13,6 +13,7 @@ import { Dashboard, Namespace, User } from './types';
 import { authMiddleware } from './auth';
 import { closeMongoPool } from './db/mongo-adapter';
 import { PORT, DATA_DIR, USER_DATA_DIR, SECRETS_DIR, ALLOWED_ORIGIN, CLIENT_DIST, PROD } from './config';
+import { APP_VERSION } from './version';
 
 [DATA_DIR, USER_DATA_DIR, SECRETS_DIR].forEach(d => {
   if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
@@ -35,7 +36,7 @@ app.use('/api/dashboards', dashboardsRouter(DATA_DIR, dashboardDb, namespacesDb)
 app.use('/api/query', queryRouter(dashboardDb, namespacesDb));
 app.use('/api/share', shareRouter(dashboardDb, namespacesDb));
 
-app.get('/api/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+app.get('/api/health', (_req, res) => res.json({ status: 'ok', version: APP_VERSION, timestamp: new Date().toISOString() }));
 
 // Serve client build in production
 if (PROD && fs.existsSync(CLIENT_DIST)) {
@@ -51,7 +52,7 @@ async function start() {
     allowedRoles: ['operator', 'viewer'], allowedUserIds: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   });
   server = app.listen(PORT, () => {
-    console.log(`NodeBI server running on http://localhost:${PORT}`);
+    console.log(`NodeBI v${APP_VERSION} running on http://localhost:${PORT}`);
     console.log(`Data directory: ${DATA_DIR}`);
   });
 }

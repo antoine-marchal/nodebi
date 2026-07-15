@@ -3,16 +3,18 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CLIENT_DIST = exports.PROD = exports.MAX_RESPONSE_ROWS = exports.ENABLE_SEED = exports.SHARE_SECRET = exports.PROXYAUTH_REGEX = exports.PROXYAUTH_LOGIN_URL = exports.PROXYAUTH_URL = exports.PROXYAUTH_NAME = exports.PUBLIC_URL = exports.ADMIN_PASSWORD = exports.ADMIN_LOGIN = exports.JWT_SECRET = exports.AUTH_TOKEN = exports.ALLOWED_ORIGIN = exports.SECRETS_DIR = exports.USER_DATA_DIR = exports.DATA_DIR = exports.PORT = void 0;
+exports.CLIENT_DIST = exports.PROD = exports.MAX_RESPONSE_ROWS = exports.ENABLE_SEED = exports.SHARE_SECRET = exports.PROXYAUTH_REGEX = exports.PROXYAUTH_LOGIN_URL = exports.PROXYAUTH_URL = exports.PROXYAUTH_NAME = exports.PUBLIC_URL = exports.ADMIN_PASSWORD = exports.ADMIN_LOGIN = exports.JWT_SECRET = exports.AUTH_TOKEN = exports.ALLOWED_ORIGIN = exports.SECRETS_DIR = exports.USER_DATA_DIR = exports.DATA_DIR = exports.PORT = exports.RUNTIME_DIR = void 0;
 const path_1 = __importDefault(require("path"));
 const dotenv_1 = __importDefault(require("dotenv"));
-// npm --prefix runs server scripts with server/ as cwd; always load the project-level file first.
-dotenv_1.default.config({ path: path_1.default.resolve(__dirname, '..', '..', '.env') });
+const PACKAGED = Boolean(process.pkg);
+exports.RUNTIME_DIR = PACKAGED ? path_1.default.dirname(process.execPath) : path_1.default.resolve(__dirname, '..', '..');
+// Packaged releases load configuration beside nodebi.exe. Source builds load it from the repository root.
+dotenv_1.default.config({ path: path_1.default.join(exports.RUNTIME_DIR, '.env') });
 dotenv_1.default.config();
 exports.PORT = Number(process.env.PORT) || 3001;
 exports.DATA_DIR = process.env.DATA_DIR
     ? path_1.default.resolve(process.env.DATA_DIR)
-    : path_1.default.join(__dirname, '..', 'data');
+    : PACKAGED ? path_1.default.join(exports.RUNTIME_DIR, 'data') : path_1.default.join(__dirname, '..', 'data');
 exports.USER_DATA_DIR = path_1.default.join(exports.DATA_DIR, 'user');
 exports.SECRETS_DIR = path_1.default.join(exports.DATA_DIR, 'secrets');
 exports.ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '*';
@@ -29,7 +31,7 @@ exports.PROXYAUTH_REGEX = process.env.NODEBI_PROXYAUTH_REGEX || '';
 exports.SHARE_SECRET = process.env.SHARE_SECRET || 'change-me-share-secret';
 exports.ENABLE_SEED = process.env.ENABLE_SEED === 'true';
 exports.MAX_RESPONSE_ROWS = Number(process.env.MAX_RESPONSE_ROWS) || 10000;
-exports.PROD = process.env.NODE_ENV === 'production';
+exports.PROD = PACKAGED || process.env.NODE_ENV === 'production';
 exports.CLIENT_DIST = process.env.CLIENT_DIST
     ? path_1.default.resolve(process.env.CLIENT_DIST)
     : path_1.default.join(__dirname, '..', '..', 'client', 'dist');

@@ -1,1 +1,2 @@
+{"_id":"2ee078aa-29b7-4765-a443-438b23535339","name":"Test","description":"","allowedRoles":[],"allowedUserIds":[],"createdAt":"2026-07-14T16:14:39.703Z","updatedAt":"2026-07-14T16:15:25.943Z"}
 {"_id":"default","name":"Default","description":"Visible to every authenticated user","allowedRoles":["operator","viewer"],"allowedUserIds":[],"createdAt":"2026-07-14T15:48:03.769Z","updatedAt":"2026-07-14T15:48:03.769Z"}

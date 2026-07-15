@@ -1,7 +1,48 @@
-/.claude
+### Local agent and design artifacts
+/.claude/
 /AGENT.md
-/design_import
-/graphify-out
+/design_import/
+/graphify-out/
 /todo.md
-node_modules
-/client/node_modules
+
+### Dependencies
+node_modules/
+client/node_modules/
+server/node_modules/
+
+### Environment and local secrets
+.env
+.env.*
+!.env.example
+!.env.production.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+### Build, package, and test output
+client/dist/
+server/dist/
+release/
+coverage/
+*.tsbuildinfo
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+### Runtime data and databases
+/data/
+/server/data/
+*.db-journal
+*.db-tmp
+
+### IDE and operating-system files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+Desktop.ini

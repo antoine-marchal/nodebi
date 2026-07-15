@@ -88,6 +88,9 @@ export default function TableWidget({ data, config }: Props) {
   const inSel = (r: number, c: number) => !!selRect && r >= selRect.r0 && r <= selRect.r1 && c >= selRect.c0 && c <= selRect.c1;
 
   const onCellMouseDown = (r: number, c: number, e: React.MouseEvent) => {
+    // Mouse selection prevents the browser's default focus change below, so
+    // focus the widget explicitly to ensure keyboard shortcuts reach it.
+    containerRef.current?.focus({ preventScroll: true });
     if (e.shiftKey && anchor) {
       setFocus({ r, c });
     } else {

@@ -2,7 +2,10 @@ import { ChartConfig, KPIConfig, StatCardConfig, GaugeConfig, DataSource, ChartI
 import { queryApi, shareApi } from './api';
 
 export function safeJSON(str: string): object {
-  try { return JSON.parse(str || '{}'); } catch { return {}; }
+  try {
+    const parsed = JSON.parse(str || '{}');
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch { return {}; }
 }
 
 export function parsePipeline(str: string): object[] | null {
@@ -10,33 +13,86 @@ export function parsePipeline(str: string): object[] | null {
   return null;
 }
 
-function mergeGlobalFilters(base: object, gf?: GlobalFilters): object {
-  if (!gf) return base;
-  const merged: any = { ...base };
+function globalFilterQuery(gf?: GlobalFilters, coerceMongoDates = false): object {
+  if (!gf) return {};
+  const search = gf.search ? safeJSON(gf.search) : {};
   if (gf.dateField && (gf.dateFrom || gf.dateTo)) {
+    if (coerceMongoDates) {
+      const fieldDate = { $convert: { input: `$${gf.dateField}`, to: 'date', onError: null, onNull: null } };
+      const comparisons: object[] = [];
+      if (gf.dateFrom) comparisons.push({ $gte: [fieldDate, { $toDate: gf.dateFrom }] });
+      if (gf.dateTo) comparisons.push({ $lte: [fieldDate, { $toDate: `${gf.dateTo}T23:59:59.999Z` }] });
+      const dateQuery = { $expr: comparisons.length === 1 ? comparisons[0] : { $and: comparisons } };
+      return Object.keys(search).length ? { $and: [search, dateQuery] } : dateQuery;
+    }
     const range: any = {};
     if (gf.dateFrom) range.$gte = gf.dateFrom;
     if (gf.dateTo) range.$lte = gf.dateTo;
-    if (Object.keys(range).length) merged[gf.dateField] = { ...(merged[gf.dateField] || {}), ...range };
+    if (Object.keys(range).length) return { ...search, [gf.dateField]: { ...(search as any)[gf.dateField], ...range } };
   }
-  return merged;
+  return search;
 }
 
-export function buildChartPipeline(cfg: ChartConfig, gf?: GlobalFilters): object[] | null {
+function mergeGlobalFilters(base: object, gf?: GlobalFilters, coerceMongoDates = false): object {
+  const global = globalFilterQuery(gf, coerceMongoDates);
+  if (!Object.keys(global).length) return base;
+  if (!Object.keys(base).length) return global;
+  return { $and: [base, global] };
+}
+
+export function applyGlobalFiltersToPipeline(pipeline: object[], gf?: GlobalFilters, coerceMongoDates = false): object[] {
+  const global = globalFilterQuery(gf, coerceMongoDates);
+  if (!Object.keys(global).length) return pipeline;
+
+  const stages = pipeline as Record<string, any>[];
+  const filterFields = new Set([
+    ...(gf?.dateField ? [gf.dateField] : []),
+    ...Object.keys(gf?.search ? safeJSON(gf.search) : {}).filter(key => !key.startsWith('$')),
+  ]);
+  let insertAt = 0;
+  for (let i = 0; i < stages.length; i += 1) {
+    if (stages[i].$group) break;
+    const computed = stages[i].$addFields || stages[i].$set;
+    if (computed && Object.keys(computed).some(field => filterFields.has(field))) insertAt = i + 1;
+  }
+
+  if (stages[insertAt]?.$match) {
+    return [
+      ...stages.slice(0, insertAt),
+      { $match: { $and: [stages[insertAt].$match, global] } },
+      ...stages.slice(insertAt + 1),
+    ];
+  }
+  return [...stages.slice(0, insertAt), { $match: global }, ...stages.slice(insertAt)];
+}
+
+function isMongoSource(ctx: QueryContext, dataSourceId: string): boolean {
+  return ctx.dataSources.find(ds => ds.id === dataSourceId)?.type === 'mongodb';
+}
+
+export function buildChartPipeline(cfg: ChartConfig, gf?: GlobalFilters, coerceMongoDates = false): object[] | null {
   if (!cfg.xField) return null;
   const pipeline: object[] = [];
-  const f = mergeGlobalFilters(safeJSON(cfg.queryFilter), gf);
+  const f = mergeGlobalFilters(safeJSON(cfg.queryFilter), gf, coerceMongoDates);
   if (Object.keys(f).length) pipeline.push({ $match: f });
-  const accOp = cfg.aggregation === 'count' ? '$sum' : `$${cfg.aggregation}`;
-  const accVal = cfg.aggregation === 'count' ? 1 : `$${cfg.yField}`;
-  pipeline.push({ $group: { _id: `$${cfg.xField}`, value: { [accOp]: accVal } } });
+  const configuredSeries = cfg.series?.length
+    ? cfg.series
+    : [{ field: cfg.yField, aggregation: cfg.aggregation, name: cfg.legendName, color: cfg.color }];
+  const group: Record<string, any> = { _id: `$${cfg.xField}` };
+  configuredSeries.forEach((series, index) => {
+    const aggregation = series.aggregation || cfg.aggregation || 'sum';
+    const accOp = aggregation === 'count' ? '$sum' : `$${aggregation}`;
+    const accVal = aggregation === 'count' ? 1 : `$${series.field}`;
+    group[`series_${index}`] = { [accOp]: accVal };
+  });
+  pipeline.push({ $group: group });
   pipeline.push({ $sort: { _id: 1 } });
   return pipeline;
 }
 
-export function buildMetricPipeline(cfg: KPIConfig | StatCardConfig | GaugeConfig, gf?: GlobalFilters): object[] {
+export function buildMetricPipeline(cfg: KPIConfig | StatCardConfig | GaugeConfig, gf?: GlobalFilters, coerceMongoDates = false): object[] {
   const pipeline: object[] = [];
-  const f = mergeGlobalFilters(safeJSON((cfg as any).queryFilter || '{}'), gf);
+  const f = mergeGlobalFilters(safeJSON((cfg as any).queryFilter || '{}'), gf, coerceMongoDates);
   if (Object.keys(f).length) pipeline.push({ $match: f });
   const accOp = cfg.aggregation === 'count' ? '$sum' : `$${cfg.aggregation}`;
   const accVal = cfg.aggregation === 'count' ? 1 : `$${(cfg as KPIConfig).valueField}`;
@@ -104,20 +160,20 @@ export async function fetchChartData(
   if (cfg.usePipeline && cfg.pipeline) {
     const p = parsePipeline(cfg.pipeline);
     if (!p) throw new Error('Invalid pipeline JSON');
-    return cached(ctx, cfg.dataSourceId, cfg.collection, { pipeline: p });
+    return cached(ctx, cfg.dataSourceId, cfg.collection, { pipeline: applyGlobalFiltersToPipeline(p, ctx.globalFilters, isMongoSource(ctx, cfg.dataSourceId)) });
   }
   if (type === 'scatter-chart') {
     return cached(ctx, cfg.dataSourceId, cfg.collection, {
-      queryFilter: mergeGlobalFilters(safeJSON(cfg.queryFilter), ctx.globalFilters),
+      queryFilter: mergeGlobalFilters(safeJSON(cfg.queryFilter), ctx.globalFilters, isMongoSource(ctx, cfg.dataSourceId)),
       limit: 500,
     });
   }
-  const pipeline = buildChartPipeline(cfg, ctx.globalFilters);
+  const pipeline = buildChartPipeline(cfg, ctx.globalFilters, isMongoSource(ctx, cfg.dataSourceId));
   if (pipeline) {
     return cached(ctx, cfg.dataSourceId, cfg.collection, { pipeline });
   }
   return cached(ctx, cfg.dataSourceId, cfg.collection, {
-    queryFilter: mergeGlobalFilters(safeJSON(cfg.queryFilter), ctx.globalFilters),
+    queryFilter: mergeGlobalFilters(safeJSON(cfg.queryFilter), ctx.globalFilters, isMongoSource(ctx, cfg.dataSourceId)),
   });
 }
 
@@ -130,10 +186,10 @@ export async function fetchMetricData(
   if (cfg.usePipeline && cfg.pipeline) {
     const p = parsePipeline(cfg.pipeline);
     if (!p) throw new Error('Invalid pipeline JSON');
-    return cached(ctx, cfg.dataSourceId, cfg.collection, { pipeline: p });
+    return cached(ctx, cfg.dataSourceId, cfg.collection, { pipeline: applyGlobalFiltersToPipeline(p, ctx.globalFilters, isMongoSource(ctx, cfg.dataSourceId)) });
   }
   return cached(ctx, cfg.dataSourceId, cfg.collection, {
-    pipeline: buildMetricPipeline(cfg, ctx.globalFilters),
+    pipeline: buildMetricPipeline(cfg, ctx.globalFilters, isMongoSource(ctx, cfg.dataSourceId)),
   });
 }
 
@@ -145,10 +201,10 @@ export async function fetchTableData(
   if (cfg.usePipeline && cfg.pipeline) {
     const p = parsePipeline(cfg.pipeline);
     if (!p) throw new Error('Invalid pipeline JSON');
-    return cached(ctx, cfg.dataSourceId, cfg.collection, { pipeline: p });
+    return cached(ctx, cfg.dataSourceId, cfg.collection, { pipeline: applyGlobalFiltersToPipeline(p, ctx.globalFilters, isMongoSource(ctx, cfg.dataSourceId)) });
   }
   return cached(ctx, cfg.dataSourceId, cfg.collection, {
-    queryFilter: mergeGlobalFilters(safeJSON(cfg.queryFilter || '{}'), ctx.globalFilters),
+    queryFilter: mergeGlobalFilters(safeJSON(cfg.queryFilter || '{}'), ctx.globalFilters, isMongoSource(ctx, cfg.dataSourceId)),
     limit: cfg.limit || 50,
   });
 }

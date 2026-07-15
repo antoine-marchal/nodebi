@@ -29,13 +29,22 @@ export interface BaseDataConfig {
   pipeline?: string;
 }
 
+export interface ChartSeries {
+  field: string;
+  aggregation?: AggregationType;
+  name?: string;
+  color?: string;
+}
+
 export interface ChartConfig extends BaseDataConfig {
   xField: string;
   yField: string;
+  series?: ChartSeries[];
   aggregation?: AggregationType;
   color?: string;
   showLabels?: boolean;
   showLegend?: boolean;
+  legendName?: string;
 }
 
 export interface TableConfig extends BaseDataConfig {
@@ -181,9 +190,12 @@ export function createDefaultConfig(type: WidgetType): WidgetConfig {
     case 'table':
       return { dataSourceId: '', collection: '', queryFilter: '{}', columns: '', limit: 50 };
     case 'scatter-chart':
-      return { dataSourceId: '', collection: '', queryFilter: '{}', xField: '', yField: '', showLabels: false };
-    default:
+      return { dataSourceId: '', collection: '', queryFilter: '{}', xField: '', yField: '', series: [{ field: '' }], showLabels: false };
+    case 'pie-chart':
+    case 'donut-chart':
       return { dataSourceId: '', collection: '', queryFilter: '{}', xField: '', yField: '', aggregation: 'sum', showLabels: false, showLegend: false };
+    default:
+      return { dataSourceId: '', collection: '', queryFilter: '{}', xField: '', yField: '', series: [{ field: '', aggregation: 'sum' }], aggregation: 'sum', showLabels: false, showLegend: false };
   }
 }
 

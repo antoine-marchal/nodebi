@@ -17,6 +17,7 @@ const nedb_1 = __importDefault(require("@seald-io/nedb"));
 const auth_2 = require("./auth");
 const mongo_adapter_1 = require("./db/mongo-adapter");
 const config_1 = require("./config");
+const version_1 = require("./version");
 [config_1.DATA_DIR, config_1.USER_DATA_DIR, config_1.SECRETS_DIR].forEach(d => {
     if (!fs_1.default.existsSync(d))
         fs_1.default.mkdirSync(d, { recursive: true });
@@ -34,7 +35,7 @@ app.use('/api/namespaces', (0, namespaces_1.namespacesRouter)(namespacesDb, dash
 app.use('/api/dashboards', (0, dashboards_1.dashboardsRouter)(config_1.DATA_DIR, dashboardDb, namespacesDb));
 app.use('/api/query', (0, query_1.queryRouter)(dashboardDb, namespacesDb));
 app.use('/api/share', (0, share_1.shareRouter)(dashboardDb, namespacesDb));
-app.get('/api/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+app.get('/api/health', (_req, res) => res.json({ status: 'ok', version: version_1.APP_VERSION, timestamp: new Date().toISOString() }));
 // Serve client build in production
 if (config_1.PROD && fs_1.default.existsSync(config_1.CLIENT_DIST)) {
     app.use(express_1.default.static(config_1.CLIENT_DIST));
@@ -49,7 +50,7 @@ async function start() {
             allowedRoles: ['operator', 'viewer'], allowedUserIds: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
         });
     server = app.listen(config_1.PORT, () => {
-        console.log(`NodeBI server running on http://localhost:${config_1.PORT}`);
+        console.log(`NodeBI v${version_1.APP_VERSION} running on http://localhost:${config_1.PORT}`);
         console.log(`Data directory: ${config_1.DATA_DIR}`);
     });
 }

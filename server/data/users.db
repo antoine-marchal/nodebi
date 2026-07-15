@@ -1,1 +1,3 @@
+{"_id":"7b3c0dbe-2aa4-4b61-a19c-f043cb3f985b","login":"test","passwordHash":"$2b$12$SrXyJ00x9MOSbLUz/vO0Au9Iu82YIMPx9ZhRZmab/YUgXePs0hQQy","role":"operator","createdAt":"2026-07-14T16:15:01.672Z","updatedAt":"2026-07-14T16:15:01.672Z"}
 {"_id":"c5c487c0-0dff-4cc4-b2fa-ec77c69970cc","login":"admin","passwordHash":"$2b$12$I3KBOhHi3oQMr88a5mOEo.xjpLXSAFA6G41xbTHkbYIQFbA7qgveC","role":"admin","createdAt":"2026-07-14T15:48:03.552Z","updatedAt":"2026-07-14T15:48:03.552Z"}
+{"_id":"c86b22e2-3af3-4f5a-b2b9-86b4417d4f15","login":"viewer","passwordHash":"$2b$12$y/Wv4N9eNiX7wz.Gz2QCZugWsr.18vCnVS6pDpokr0IXX31V7RbWG","role":"viewer","createdAt":"2026-07-15T07:47:23.357Z","updatedAt":"2026-07-15T07:47:23.357Z"}
